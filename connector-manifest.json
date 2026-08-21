@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "donetick-mcp",
+  "displayName": "DoneTick MCP Server",
+  "version": "1.0.0",
+  "description": "Model Context Protocol (MCP) HTTP Server-Sent Events connector for DoneTick task and chore management.",
+  "author": "bibiwan",
+  "license": "MIT",
+  "homepage": "https://github.com/bibiwan/mcp_donetick",
+  "transport": {
+    "type": "sse",
+    "url": "http://localhost:3000/sse",
+    "auth": {
+      "type": "bearer",
+      "tokenEnv": "DONETICK_TOKEN",
+      "description": "DoneTick Access Token / API Key"
+    }
+  },
+  "capabilities": {
+    "tools": 37
+  },
+  "supportedClients": [
+    "Mistral Le Chat",
+    "Claude Desktop",
+    "LibreChat",
+    "n8n",
+    "Open WebUI"
+  ]
+}
