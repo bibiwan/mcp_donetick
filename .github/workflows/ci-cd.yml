@@ -75,9 +75,36 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+  npm-publish:
+    name: Publish to NPM (Optional)
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies & Build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Publish to NPM Registry
+        if: env.NPM_AUTH_TOKEN != ''
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   release:
     name: Create GitHub Release
-    needs: docker-publish
+    needs: [docker-publish]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -103,10 +130,15 @@ jobs:
             - **OWASP Hardened**: Timing-safe token comparison, SSRF protocol protection, HTTP security headers, payload caps, and non-root Docker execution.
             - **Multi-Arch Docker Images**: Prebuilt for `linux/amd64` and `linux/arm64` on GitHub Packages (`ghcr.io/${{ github.repository }}:latest`).
 
-            ### 🐳 Quick Pull & Run
+            ### 🐳 Quick Pull & Run (Docker)
             ```bash
             docker run -d -p 3000:3000 \
               -e DONETICK_URL=http://your-donetick-host:2021 \
               --name mcp-donetick \
               ghcr.io/${{ github.repository }}:latest
+            ```
+
+            ### ⚡ Run directly via NPX
+            ```bash
+            npx mcp-donetick
             ```
