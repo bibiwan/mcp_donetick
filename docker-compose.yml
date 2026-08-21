@@ -1,0 +1,25 @@
+services:
+  mcp-donetick:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp-donetick:latest
+    container_name: mcp-donetick
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - DONETICK_URL=${DONETICK_URL:-http://localhost:2021}
+      - DONETICK_TOKEN=${DONETICK_TOKEN:-}
+      - API_KEY=${API_KEY:-}
+      - ACCESS_TOKEN=${ACCESS_TOKEN:-}
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
