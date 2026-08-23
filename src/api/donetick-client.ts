@@ -26,6 +26,7 @@ import {
   ThingHistoryEntry,
 } from '../types/donetick.js';
 import { DateOptions, toRfc3339, requireRfc3339 } from '../utils/dates.js';
+import { htmlToText, textToHtml } from '../utils/html.js';
 
 export class DoneTickClient {
   private http: AxiosInstance;
@@ -65,6 +66,29 @@ export class DoneTickClient {
   /** Same, for fields DoneTick cannot accept as null. */
   private requiredDate(value: string): string {
     return requireRfc3339(value, this.dateOptions);
+  }
+
+  /**
+   * Presents a chore's description as plain text while keeping the stored
+   * markup alongside it.
+   *
+   * DoneTick stores descriptions as HTML, but chores created through older
+   * versions of this connector hold plain text, so callers otherwise see an
+   * arbitrary mix of `<p>Wipe the shelves</p>` and `Wipe the shelves`.
+   * `descriptionHtml` retains the original so an update can round-trip it.
+   */
+  private normalizeDescription<T extends { description?: string | null }>(entity: T): T {
+    if (!entity || typeof entity !== 'object') {
+      return entity;
+    }
+    const raw = entity.description;
+    if (raw === undefined || raw === null || raw === '') {
+      return entity;
+    }
+    const text = htmlToText(raw);
+    // Only surface the raw form when it actually carries markup, so a
+    // plain-text description does not come back duplicated.
+    return text === raw ? entity : { ...entity, description: text, descriptionHtml: raw };
   }
 
   /**
@@ -131,7 +155,7 @@ export class DoneTickClient {
         chores = chores.filter((c) => c.status === options.status);
       }
 
-      return chores;
+      return chores.map((c) => this.normalizeDescription(c));
     } catch (error) {
       this.handleError(error, 'listChores');
     }
@@ -143,7 +167,8 @@ export class DoneTickClient {
   async getChore(id: number): Promise<Chore> {
     try {
       const resp = await this.http.get(`/api/v1/chores/${id}`);
-      return (resp.data as any)?.res || resp.data;
+      const chore = (resp.data as any)?.res || resp.data;
+      return this.normalizeDescription(chore);
     } catch (error) {
       this.handleError(error, `getChore(${id})`);
     }
@@ -176,7 +201,9 @@ export class DoneTickClient {
 
       payload.subTasks = this.normalizeSubTasks((input.subTasks ?? []) as SubTask[]);
 
-      if (input.description !== undefined) payload.description = input.description;
+      // Wrap plain text so multi-line descriptions render as written in the
+      // web UI, which treats this field as HTML. Existing markup passes through.
+      if (input.description !== undefined) payload.description = textToHtml(input.description);
 
       // `ChoreReq` only declares `nextDueDate`; `dueDate` is accepted here as a
       // caller-side alias and normalized, since a bare `YYYY-MM-DD` fails Go's
@@ -281,9 +308,11 @@ export class DoneTickClient {
       }
 
       if (input.description !== undefined) {
-        payload.description = input.description;
+        payload.description = textToHtml(input.description);
       } else if (existing?.description !== undefined) {
-        payload.description = existing.description;
+        // `existing.description` was normalized to text on read; send back the
+        // stored markup so an unrelated update does not flatten it.
+        payload.description = (existing as any).descriptionHtml ?? existing.description;
       }
 
       if (input.nextDueDate !== undefined) {
@@ -756,7 +785,8 @@ export class DoneTickClient {
   async getChoreDetail(id: number): Promise<ChoreDetail> {
     try {
       const resp = await this.http.get(`/api/v1/chores/${id}/details`);
-      return (resp.data as any)?.res ?? resp.data;
+      const detail = (resp.data as any)?.res ?? resp.data;
+      return this.normalizeDescription(detail);
     } catch (error) {
       this.handleError(error, `getChoreDetail(${id})`);
     }
@@ -967,7 +997,7 @@ export class DoneTickClient {
     try {
       const resp = await this.http.get('/api/v1/chores/archived');
       const data = (resp.data as any)?.res ?? resp.data;
-      return Array.isArray(data) ? data : [];
+      return Array.isArray(data) ? data.map((c) => this.normalizeDescription(c)) : [];
     } catch (error) {
       this.handleError(error, 'listArchivedChores');
     }

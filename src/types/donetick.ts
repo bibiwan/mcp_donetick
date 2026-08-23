@@ -85,6 +85,13 @@ export interface Chore {
   createdBy?: number;
   updatedBy?: number;
   thingChore?: any;
+  /**
+   * The description exactly as DoneTick stores it, which is HTML for anything
+   * written through the web editor. `description` is normalized to plain text
+   * on read; this keeps the original so an update can round-trip it without
+   * flattening the markup or dropping images.
+   */
+  descriptionHtml?: string | null;
   status?: number;
   priority?: number;
   points?: number;
@@ -253,6 +260,8 @@ export interface ChoreDetail {
   id: number;
   name: string;
   description?: string | null;
+  /** The description as stored; see the note on `Chore.descriptionHtml`. */
+  descriptionHtml?: string | null;
   frequencyType?: string;
   nextDueDate?: string | null;
   assignedTo?: number | null;

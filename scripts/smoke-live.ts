@@ -118,6 +118,35 @@ async function main(): Promise<void> {
       return `orderId = ${orders.join(',')}`;
     });
 
+    // ---------- descriptions ----------
+    console.log('\nDescriptions');
+    await check('a plain-text description is stored as renderable HTML', async () => {
+      await client.updateChore({ id: choreId, description: 'Line one\nLine two' });
+      const chore = await client.getChore(choreId);
+      const raw = (chore as any).descriptionHtml;
+      expect(!!raw, 'descriptionHtml missing, so nothing was converted');
+      expect(raw.includes('<br>'), `expected a line break in the stored markup, got ${raw}`);
+      return raw;
+    });
+
+    await check('reading it back gives plain text, not markup', async () => {
+      const chore = await client.getChore(choreId);
+      expect(chore.description === 'Line one\nLine two', `got ${JSON.stringify(chore.description)}`);
+      return JSON.stringify(chore.description);
+    });
+
+    await check('an unrelated update does not flatten the stored markup', async () => {
+      const before = (await client.getChore(choreId)) as any;
+      await client.setChorePriority(choreId, 3);
+      await client.updateChore({ id: choreId, name: `${TEST_PREFIX} smoke (renamed)` });
+      const after = (await client.getChore(choreId)) as any;
+      expect(
+        after.descriptionHtml === before.descriptionHtml,
+        `markup changed: ${before.descriptionHtml} -> ${after.descriptionHtml}`
+      );
+      return 'preserved';
+    });
+
     // ---------- due date ----------
     console.log('\nDue date');
     await check('setChoreDueDate with RFC3339 (was HTTP 400: missing updatedAt)', async () => {
