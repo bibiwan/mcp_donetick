@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "donetick-mcp",
   "displayName": "DoneTick MCP Server",
-  "version": "1.0.0",
-  "description": "Model Context Protocol (MCP) HTTP Server-Sent Events connector for DoneTick task and chore management.",
+  "version": "2.0.0",
+  "description": "Model Context Protocol (MCP) HTTP Server-Sent Events connector for DoneTick task and chore management, including completion history and time tracking.",
   "author": "bibiwan",
   "license": "MIT",
   "homepage": "https://github.com/bibiwan/mcp_donetick",
@@ -17,7 +17,7 @@
     }
   },
   "capabilities": {
-    "tools": 37
+    "tools": 57
   },
   "supportedClients": [
     "Mistral Le Chat",

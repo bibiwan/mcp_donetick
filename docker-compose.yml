@@ -1,9 +1,13 @@
 services:
   mcp-donetick:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: mcp-donetick:latest
+    # Published by CI on every v* tag, multi-arch (amd64 + arm64).
+    # Pin a version instead of :latest if you want deploys to be deliberate.
+    image: ghcr.io/bibiwan/mcp_donetick:latest
+    # Uncomment to build locally instead of pulling. Note that a local build
+    # skips the test suite that gates the published image.
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
     container_name: mcp-donetick
     restart: unless-stopped
     ports:
@@ -16,6 +20,10 @@ services:
       - API_KEY=${API_KEY:-}
       - ACCESS_TOKEN=${ACCESS_TOKEN:-}
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:-}
+      # Resolves date-only inputs ("2026-08-30") to a local hour rather than
+      # midnight UTC. Without this, "due tomorrow" lands at 00:00 UTC.
+      - DONETICK_TIMEZONE=${DONETICK_TIMEZONE:-UTC}
+      - DONETICK_DEFAULT_DUE_TIME=${DONETICK_DEFAULT_DUE_TIME:-18:00}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]

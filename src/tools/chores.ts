@@ -36,15 +36,40 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
   // 2. Get Chore
   server.tool(
     'donetick_get_chore',
-    'Retrieve complete details of a specific chore by its ID (including assignees, subtasks, recurrence, and labels).',
+    'Retrieve complete details of a specific chore by its ID: assignees, subtasks, recurrence, ' +
+      'labels, plus completion tracking (lastCompletedDate, lastCompletedBy) and time spent.',
     {
       choreId: z.number().describe('The ID of the chore to retrieve'),
     },
     async ({ choreId }) => {
       try {
         const chore = await client.getChore(choreId);
+
+        // DoneTick splits a chore across two projections: GET /chores/{id} has
+        // the editable fields, GET /chores/{id}/details has the completion and
+        // timer data. Merge them so callers need one round-trip, and degrade
+        // gracefully when /details is unavailable.
+        let enriched: Record<string, any> = { ...chore };
+        try {
+          const detail = await client.getChoreDetail(choreId);
+          enriched = {
+            ...enriched,
+            lastCompletedDate: detail.lastCompletedDate ?? null,
+            lastCompletedBy: detail.lastCompletedBy ?? null,
+            // DoneTick's `totalCompletedCount` counts every history row --
+            // reschedules and skips included -- so it is renamed here to stop
+            // callers reading it as a completion count.
+            historyEntryCount: detail.totalCompletedCount ?? null,
+            timeSpentSeconds: detail.duration ?? null,
+            timerRunningSince: detail.startTime ?? null,
+            lastCompletionNotes: detail.notes ?? null,
+          };
+        } catch {
+          enriched.detailsUnavailable = true;
+        }
+
         return {
-          content: [{ type: 'text', text: JSON.stringify(chore, null, 2) }],
+          content: [{ type: 'text', text: JSON.stringify(enriched, null, 2) }],
         };
       } catch (error: any) {
         return {
@@ -62,7 +87,17 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
     {
       name: z.string().describe('The name/title of the chore (required)'),
       description: z.string().optional().describe('Detailed description or markdown notes for the chore'),
-      dueDate: z.string().optional().describe('Due date in RFC3339 format (e.g. 2026-08-30T19:00:00Z) or YYYY-MM-DD (e.g. 2026-08-30)'),
+      dueDate: z
+        .string()
+        .optional()
+        .describe(
+          'Due date as RFC3339 (2026-08-30T19:00:00Z), YYYY-MM-DD (2026-08-30) or ' +
+            '"YYYY-MM-DD HH:mm". Date-only values land at the configured default hour.'
+        ),
+      nextDueDate: z
+        .string()
+        .optional()
+        .describe('Alias of dueDate, matching DoneTick own field name. Same accepted formats.'),
       frequencyType: z
         .enum([
           'once',
@@ -80,7 +115,12 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
         .optional()
         .describe('Recurrence type (default: once)'),
       frequency: z.number().optional().describe('Frequency interval (e.g. every 1 day/week/month)'),
-      priority: z.number().min(0).max(5).optional().describe('Priority level (0 = lowest, 5 = highest)'),
+      priority: z
+        .number()
+        .min(0)
+        .max(4)
+        .optional()
+        .describe('Priority: 1 = highest (P1), 2, 3, 4 = lowest (P4). 0 means no priority.'),
       points: z.number().min(0).optional().describe('Points earned upon completing this chore'),
       projectId: z.number().optional().describe('ID of the project this chore belongs to'),
       assignedTo: z.number().optional().describe('User ID to assign the chore to'),
@@ -121,6 +161,14 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
         )
         .optional()
         .describe('List of labels/tags to attach to this chore'),
+      completionWindow: z
+        .number()
+        .optional()
+        .describe('Seconds before the due date during which the chore may already be completed'),
+      requireApproval: z
+        .boolean()
+        .optional()
+        .describe('Require an admin to approve each completion of this chore'),
       thingId: z.number().optional().describe('ID of a Thing (sensor/appliance/counter) to link as automatic trigger for this chore'),
       triggerValue: z.string().optional().describe('State or threshold value of the Thing that triggers the chore (e.g. "true", "full", "50")'),
       triggerCondition: z.enum(['eq', 'neq', 'gt', 'lt', 'gte', 'lte']).optional().describe('Trigger condition operator (default: eq)'),
@@ -211,7 +259,12 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
         .optional()
         .describe('Recurrence type'),
       frequency: z.number().optional().describe('Frequency interval number'),
-      priority: z.number().min(0).max(5).optional().describe('Priority level (0-5)'),
+      priority: z
+        .number()
+        .min(0)
+        .max(4)
+        .optional()
+        .describe('Priority: 1 = highest (P1), 2, 3, 4 = lowest (P4). 0 means no priority.'),
       points: z.number().min(0).optional().describe('Points earned'),
       projectId: z.number().optional().describe('ID of the project to attach this chore to (or 0 to detach)'),
       assignedTo: z.number().optional().describe('User ID assigned'),
@@ -357,7 +410,10 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
     'Configure reminders and notifications for a chore in DoneTick.',
     {
       choreId: z.number().describe('The ID of the chore'),
-      enabled: z.boolean().describe('Enable (true) or disable (false) notifications for this chore'),
+      enabled: z
+        .boolean()
+        .optional()
+        .describe('Enable (true, the default) or disable (false) notifications for this chore'),
       dueDate: z.boolean().optional().describe('Notify on due date (default: true if enabled)'),
       nagging: z.boolean().optional().describe('Send recurring nagging reminders if task is overdue'),
       completion: z.boolean().optional().describe('Notify when the chore is completed'),
@@ -365,7 +421,8 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
     },
     async ({ choreId, enabled, dueDate, nagging, completion, predue }) => {
       try {
-        const notificationMetadata = enabled
+        const isEnabled = enabled ?? true;
+        const notificationMetadata = isEnabled
           ? {
               dueDate: dueDate !== undefined ? dueDate : true,
               nagging: nagging ?? false,
@@ -376,7 +433,7 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
 
         const updated = await client.updateChore({
           id: choreId,
-          notification: enabled,
+          notification: isEnabled,
           notificationMetadata,
         });
 
@@ -384,7 +441,7 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
           content: [
             {
               type: 'text',
-              text: `Chore #${choreId} notifications configured (enabled: ${enabled}):\n${JSON.stringify(updated, null, 2)}`,
+              text: `Chore #${choreId} notifications configured (enabled: ${isEnabled}):\n${JSON.stringify(updated, null, 2)}`,
             },
           ],
         };
@@ -505,7 +562,10 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
   // 4e. Set Subtasks
   server.tool(
     'donetick_set_subtasks',
-    'Set or replace the list of subtasks for a chore in DoneTick.',
+    'Replace the whole subtask list of a chore. This is destructive: any existing subtask absent ' +
+      'from the list is deleted. Entries are matched to existing subtasks by id, or by name when ' +
+      'no id is given, so completion state survives. To add or remove a single subtask without ' +
+      'rewriting everything, use donetick_add_subtask or donetick_remove_subtask.',
     {
       choreId: z.number().describe('The ID of the chore'),
       subtasks: z
@@ -523,12 +583,39 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
     },
     async ({ choreId, subtasks }) => {
       try {
+        // EditChore diffs subtasks by id: an entry without one is created, and
+        // any existing id left out is deleted. Re-attach ids by name so a
+        // caller passing plain strings does not silently drop completion state.
+        let existing: any[] = [];
+        try {
+          const chore = await client.getChore(choreId);
+          existing = (chore.subTasks ?? []) as any[];
+        } catch {
+          // A failed read only means we cannot preserve ids.
+        }
+        const byName = new Map<string, any>();
+        for (const sub of existing) {
+          const key = String(sub.name ?? '').trim().toLowerCase();
+          if (key && !byName.has(key)) byName.set(key, sub);
+        }
+
         const formatted = subtasks.map((st, idx) => {
-          if (typeof st === 'string') {
-            return { name: st, order: idx };
-          }
-          return { ...st, order: st.order ?? idx };
+          const name = typeof st === 'string' ? st : st.name;
+          const givenId = typeof st === 'string' ? undefined : st.id;
+          const matched = givenId !== undefined ? undefined : byName.get(name.trim().toLowerCase());
+          const order = typeof st === 'string' ? idx : st.order ?? idx;
+          const resolvedId = givenId !== undefined ? givenId : matched?.id;
+          return {
+            ...(resolvedId !== undefined ? { id: resolvedId } : {}),
+            name,
+            orderId: order,
+            ...(matched?.completedAt ? { completedAt: matched.completedAt } : {}),
+          };
         });
+
+        const removed = existing.filter(
+          (sub) => !formatted.some((f: any) => f.id === sub.id)
+        );
 
         const updated = await client.updateChore({
           id: choreId,
@@ -539,7 +626,7 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
           content: [
             {
               type: 'text',
-              text: `Subtasks updated for Chore #${choreId}:\n${JSON.stringify(updated, null, 2)}`,
+              text: `Subtasks updated for Chore #${choreId} (${formatted.length} kept or created, ${removed.length} deleted):\n${JSON.stringify(updated, null, 2)}`,
             },
           ],
         };
@@ -563,12 +650,13 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
     async ({ choreId, title }) => {
       try {
         const chore = await client.getChore(choreId);
-        const existing = ((chore as any).subTasks || []).map((st: any) => ({
+        const existing = ((chore as any).subTasks || []).map((st: any, idx: number) => ({
           id: st.id,
           name: st.name,
-          order: st.orderId ?? st.order ?? 0,
+          orderId: st.orderId ?? st.order ?? idx,
+          ...(st.completedAt ? { completedAt: st.completedAt } : {}),
         }));
-        existing.push({ name: title, order: existing.length });
+        existing.push({ name: title, orderId: existing.length });
 
         const updated = await client.updateChore({
           id: choreId,
@@ -595,7 +683,11 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
   // 5. Complete Chore
   server.tool(
     'donetick_complete_chore',
-    'Mark a chore as completed in DoneTick (schedules next occurrence for recurring chores).',
+    'Mark a chore as completed, scheduling the next occurrence for recurring chores. This does ' +
+      'NOT tick the subtasks: on a recurring chore DoneTick clears them all, ready for the next ' +
+      'round -- tick them individually with donetick_complete_subtask first if that matters. ' +
+      'DoneTick records no time-spent value here; use donetick_start_chore and ' +
+      'donetick_pause_chore for that.',
     {
       choreId: z.number().describe('The ID of the chore to complete'),
       notes: z.string().optional().describe('Optional completion notes or comments'),
@@ -681,10 +773,16 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
   // 8. Set Due Date
   server.tool(
     'donetick_set_due_date',
-    'Set or change the next due date for a specific chore.',
+    'Set, change or clear the next due date of a chore.',
     {
       choreId: z.number().describe('The ID of the chore'),
-      dueDate: z.string().describe('Due date in RFC3339 format (e.g. 2026-08-30T12:00:00Z) or YYYY-MM-DD (e.g. 2026-08-30)'),
+      dueDate: z
+        .string()
+        .nullable()
+        .describe(
+          'Due date as RFC3339 (2026-08-30T12:00:00Z), YYYY-MM-DD (2026-08-30) or ' +
+            '"YYYY-MM-DD HH:mm". Pass null (or "none") to remove the due date entirely.'
+        ),
     },
     async ({ choreId, dueDate }) => {
       try {
@@ -709,10 +807,15 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
   // 9. Set Priority
   server.tool(
     'donetick_set_priority',
-    'Set the priority level of a chore (0 = lowest, 5 = highest).',
+    'Set the priority of a chore. DoneTick counts down: 1 is the highest priority (P1, shown in ' +
+      'red) and 4 the lowest (P4); 0 clears it. Values above 4 are rejected by DoneTick.',
     {
       choreId: z.number().describe('The ID of the chore'),
-      priority: z.number().min(0).max(5).describe('Priority from 0 (lowest) to 5 (highest)'),
+      priority: z
+        .number()
+        .min(0)
+        .max(4)
+        .describe('1 = highest (P1), 2, 3, 4 = lowest (P4), 0 = no priority'),
     },
     async ({ choreId, priority }) => {
       try {

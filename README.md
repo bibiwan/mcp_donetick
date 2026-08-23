@@ -13,53 +13,94 @@ Compatible with **Mistral Le Chat**, **Claude Desktop**, **LibreChat**, **n8n**,
 
 ## 📋 Features
 
-The server provides **37 specialized MCP tools** covering 100% of the DoneTick API:
+The server provides **57 specialized MCP tools** covering the DoneTick API,
+including completion history and time tracking. Every endpoint is verified
+against a live instance by `npm run smoke`.
 
 ### 1. 📝 Chores & Tasks (`donetick_*`)
-- `donetick_list_chores`: List tasks with rich filters (search, project, assignee, completion status, due dates).
-- `donetick_get_chore`: Retrieve complete task details (recurrence, assignees, subtasks, labels, triggers).
-- `donetick_create_chore`: Create a chore with due date, recurrence, priority (0-5), points, project, subtasks, labels, smart notifications, and sensor triggers.
-- `donetick_update_chore`: Partial or full chore updates (name, description, due date, project, priority, labels, subtasks, thing linking).
-- `donetick_complete_chore`: Complete a chore and automatically schedule its next recurrence.
-- `donetick_undo_chore`: Undo the last completion of a chore.
-- `donetick_delete_chore`: Permanently delete a chore.
-- `donetick_set_due_date`: Quickly adjust the due date of a chore.
-- `donetick_set_priority`: Set priority level (0 = lowest to 5 = urgent).
-- `donetick_skip_chore`: Skip the current recurrence of a recurring task.
-- `donetick_nudge_chore`: Send a reminder nudge to the assigned user.
-- `donetick_set_chore_notifications`: Configure reminders (due date, predue, nagging overdue, completion).
+- `donetick_list_chores`: List tasks with filters (search, project, status).
+- `donetick_get_chore`: Full task details — recurrence, assignees, subtasks, labels, triggers — plus `lastCompletedDate`, `lastCompletedBy` and `timeSpentSeconds`.
+- `donetick_create_chore`: Create a chore with due date, recurrence, priority, points, project, subtasks, labels, notifications, approval and sensor triggers.
+- `donetick_update_chore`: Partial or full updates. Aborts rather than writing blind if the chore cannot be read first.
+- `donetick_complete_chore`: Complete a chore and schedule its next recurrence.
+- `donetick_undo_chore`: Undo the last completion.
+- `donetick_delete_chore`: Permanently delete a chore (prefer archiving).
+- `donetick_set_due_date`: Set, change, or **clear** a due date.
+- `donetick_set_priority`: Set priority — **1 is highest (P1)**, 4 lowest, 0 none.
+- `donetick_skip_chore`: Skip the current recurrence.
+- `donetick_nudge_chore`: Send a reminder nudge to the assignee.
+- `donetick_set_chore_notifications`: Configure reminders (due date, predue, nagging, completion).
+- `donetick_set_chore_project`, `donetick_set_chore_assignee`: Reassign a chore.
 
-### 2. 🧩 Subtasks Management (`donetick_*`)
-- `donetick_set_subtasks`: Replace or set the entire subtask list for a chore.
-- `donetick_add_subtask`: Add a new subtask to a chore without modifying existing subtasks.
+### 2. 📊 Completion History (`donetick_*`)
+- `donetick_get_chore_history`: Every completion, skip, reschedule and miss for one chore, with a readable `statusName` and a summary. This is the only reliable way to tell "done" from "edited" — `updatedAt` conflates both.
+- `donetick_get_history`: Circle-wide activity, filterable by date range and status.
+- `donetick_modify_history_entry`: Correct when a completion was logged, or its notes.
+- `donetick_delete_history_entry`: Remove a mistaken entry.
 
-### 3. 🏷️ Labels & Tags (`donetick_*`)
-- `donetick_list_labels`: List all labels in DoneTick (with automatic fallback resilience).
-- `donetick_create_label`: Create a new label (name, color).
-- `donetick_update_label`: Update a label name or color.
-- `donetick_delete_label`: Delete a label.
-- `donetick_set_chore_labels`: Replace all labels attached to a chore.
-- `donetick_add_chore_label`: Add a label to a chore by label ID or by name.
+### 3. ⏱️ Time Tracking (`donetick_*`)
+- `donetick_start_chore` / `donetick_pause_chore`: Run the per-chore timer.
+- `donetick_get_chore_timer`: Total time spent plus each work session.
+- `donetick_reset_chore_timer`: Clear the accumulated time.
+- `donetick_adjust_time_session` / `donetick_delete_time_session`: Correct history after the fact.
 
-### 4. ⚡ Smart Things & Event Triggers (`donetick_*`)
-- `donetick_list_things`: List all connected devices, appliances, and counters.
-- `donetick_create_thing`: Create a new Thing (type, state).
-- `donetick_update_thing`: Update a Thing's metadata.
-- `donetick_set_thing_state`: Update a sensor/counter state (e.g. coffee counter = 100, bin = full), automatically triggering linked tasks!
-- `donetick_delete_thing`: Delete a Thing.
-- `donetick_link_thing_chore`: Link a Thing to a Chore with custom trigger conditions (`eq`, `neq`, `gt`, `lt`, `gte`, `lte`).
-- `donetick_unlink_thing_chore`: Detach a Thing trigger from a Chore.
+### 4. 🧩 Subtasks (`donetick_*`)
+- `donetick_set_subtasks`: Replace the whole list. Destructive, but preserves ids and completion state by matching on name.
+- `donetick_add_subtask`: Append one subtask, leaving the others intact.
+- `donetick_complete_subtask` / `donetick_uncomplete_subtask`: Tick one subtask, by id or by name.
+- `donetick_remove_subtask`: Delete one subtask without rewriting the list.
 
-### 5. 📁 Projects (`donetick_*`)
-- `donetick_list_projects`: List all circle projects.
-- `donetick_create_project`: Create a project with color and icon.
-- `donetick_update_project`: Update a project.
-- `donetick_delete_project`: Delete a project.
+> **Note:** completing a recurring chore *clears* its subtasks rather than
+> ticking them. That is DoneTick's own behaviour, readying the next occurrence.
 
-### 6. 👥 Circles, Members & Filters (`donetick_*`)
-- `donetick_get_circle_info`: Information about the user circle.
-- `donetick_list_members`: List circle members for task assignment.
-- `donetick_list_filters`: List custom filters.
+### 5. 🗄️ Archiving & Approval (`donetick_*`)
+- `donetick_list_archived_chores`, `donetick_archive_chore`, `donetick_unarchive_chore`: Reversible alternative to deletion.
+- `donetick_approve_chore`, `donetick_reject_chore`: Review completions on chores with `requireApproval`.
+
+### 6. 🏷️ Labels & Tags (`donetick_*`)
+- `donetick_list_labels`: List labels, falling back to extracting them from chores.
+- `donetick_create_label`, `donetick_update_label`, `donetick_delete_label`: **See the limitation below** — these require a JWT.
+- `donetick_set_chore_labels`, `donetick_add_chore_label`: Attach labels to a chore.
+
+### 7. ⚡ Smart Things & Event Triggers (`donetick_*`)
+- `donetick_list_things`, `donetick_create_thing`, `donetick_update_thing`, `donetick_delete_thing`.
+- `donetick_set_thing_state`: Update a sensor or counter, automatically triggering linked tasks.
+- `donetick_get_thing_history`: Every state a thing has held, and when.
+- `donetick_link_thing_chore` / `donetick_unlink_thing_chore`: Trigger conditions (`eq`, `neq`, `gt`, `lt`, `gte`, `lte`).
+
+### 8. 📁 Projects (`donetick_*`)
+- `donetick_list_projects`, `donetick_create_project`, `donetick_update_project`, `donetick_delete_project`.
+
+### 9. 👥 Circles, Members & Filters (`donetick_*`)
+- `donetick_get_circle_info`, `donetick_list_members`, `donetick_list_filters`.
+
+---
+
+## 📅 Dates and priorities
+
+**Dates.** DoneTick binds every date to a Go `time.Time`, so it only accepts
+RFC3339. The connector additionally accepts `YYYY-MM-DD` and
+`YYYY-MM-DD HH:mm`, resolving them in `DONETICK_TIMEZONE` (default `UTC`) at
+`DONETICK_DEFAULT_DUE_TIME` (default `18:00`). Set both if you want
+"due tomorrow" to mean a sensible local hour rather than midnight UTC.
+
+**Priorities.** DoneTick counts **down**: `1` is the highest priority, shown as
+a red P1 in the web UI, and `4` is the lowest; `0` means no priority. Versions
+before 2.0.0 documented this backwards, so chores written through the old
+descriptions may carry inverted values.
+
+---
+
+## ⚠️ Known limitations
+
+- **Labels cannot be created or edited with an API key.** DoneTick mounts
+  `/api/v1/labels` behind JWT-only middleware, unlike every other route.
+  Reading falls back to extracting labels from chores; manage them in the web UI.
+- **No arbitrary duration can be logged.** `POST /chores/{id}/do` accepts no
+  time-spent value, and DoneTick's manual-duration handler is defined but never
+  routed. Use start/pause, or adjust a session's boundaries afterwards.
+- **History windows are in days.** DoneTick's `limit` is a number of days, not
+  of rows; `since`/`until` are applied client-side after the fetch.
 
 ---
 
@@ -80,7 +121,7 @@ The server provides **37 specialized MCP tools** covering 100% of the DoneTick A
 ```yaml
 services:
   mcp-donetick:
-    image: ghcr.io/yourusername/mcp-donetick:latest
+    image: ghcr.io/bibiwan/mcp_donetick:latest
     container_name: mcp-donetick
     restart: unless-stopped
     ports:
@@ -90,6 +131,9 @@ services:
       - HOST=0.0.0.0
       - DONETICK_URL=http://donetick:2021
       - DONETICK_TOKEN=
+      # Resolves date-only inputs such as "2026-08-30" to a local hour
+      - DONETICK_TIMEZONE=Europe/Paris
+      - DONETICK_DEFAULT_DUE_TIME=18:00
       - MCP_AUTH_TOKEN=
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
@@ -131,7 +175,8 @@ docker compose up -d
 # Install dependencies
 npm install
 
-# Run full test suite with coverage
+# Run the test suite with coverage.
+# Enforces an 80% floor on statements, branches, functions and lines.
 npm test
 
 # Build TypeScript
@@ -140,6 +185,20 @@ npm run build
 # Start local server
 npm start
 ```
+
+### Live smoke test
+
+The unit suite mocks axios, so it proves the payloads are shaped as intended —
+not that DoneTick accepts them. Before tagging a release, run the smoke test
+against a real instance:
+
+```bash
+DONETICK_URL=https://donetick.example DONETICK_TOKEN=xxx npm run smoke
+```
+
+It creates only objects prefixed `[mcp-test]`, exercises every endpoint the
+connector uses, deletes what it created, and refuses to delete anything lacking
+that prefix. Existing chores are never modified.
 
 ---
 

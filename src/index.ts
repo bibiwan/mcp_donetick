@@ -154,7 +154,11 @@ app.get('/', (_req: Request, res: Response) => {
       <div class="card">
         <h2>🛠️ Available Tools</h2>
         <ul>
-          <li><strong>Chores (Tasks):</strong> <code>donetick_list_chores</code>, <code>donetick_get_chore</code>, <code>donetick_create_chore</code>, <code>donetick_update_chore</code>, <code>donetick_set_subtasks</code>, <code>donetick_link_thing_chore</code>, etc.</li>
+          <li><strong>Chores (Tasks):</strong> <code>donetick_list_chores</code>, <code>donetick_get_chore</code>, <code>donetick_create_chore</code>, <code>donetick_update_chore</code>, <code>donetick_set_due_date</code>, etc.</li>
+          <li><strong>History:</strong> <code>donetick_get_chore_history</code>, <code>donetick_get_history</code>, <code>donetick_modify_history_entry</code></li>
+          <li><strong>Time tracking:</strong> <code>donetick_start_chore</code>, <code>donetick_pause_chore</code>, <code>donetick_get_chore_timer</code></li>
+          <li><strong>Subtasks:</strong> <code>donetick_set_subtasks</code>, <code>donetick_add_subtask</code>, <code>donetick_complete_subtask</code>, <code>donetick_remove_subtask</code></li>
+          <li><strong>Archive &amp; approval:</strong> <code>donetick_archive_chore</code>, <code>donetick_list_archived_chores</code>, <code>donetick_approve_chore</code></li>
           <li><strong>Projects:</strong> <code>donetick_list_projects</code>, <code>donetick_create_project</code>, <code>donetick_update_project</code>, <code>donetick_delete_project</code></li>
           <li><strong>Things (Devices/Counters):</strong> <code>donetick_list_things</code>, <code>donetick_create_thing</code>, <code>donetick_set_thing_state</code>, etc.</li>
           <li><strong>Labels (Tags):</strong> <code>donetick_list_labels</code>, <code>donetick_set_chore_labels</code>, <code>donetick_add_chore_label</code></li>
@@ -187,7 +191,10 @@ const handleSseConnection = async (req: Request, res: Response) => {
   const messagesEndpoint = req.baseUrl ? `${req.baseUrl}/messages` : '/messages';
   const transport = new SSEServerTransport(messagesEndpoint, res);
 
-  const doneTickClient = new DoneTickClient(config.donetickUrl, auth.doneTickToken);
+  const doneTickClient = new DoneTickClient(config.donetickUrl, auth.doneTickToken, {
+    timeZone: config.timeZone,
+    defaultTime: config.defaultDueTime,
+  });
   const mcpServer = createDoneTickMcpServer(doneTickClient);
 
   try {
