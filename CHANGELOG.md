@@ -107,6 +107,14 @@ endpoint was verified against a live DoneTick instance.
   docs.
 - Release notes are read from this changelog instead of being hardcoded in the
   workflow, where they claimed "first official production release" on every tag.
+- **The arm64 image now builds without emulation.** The Dockerfile's build stage
+  is pinned to `$BUILDPLATFORM`: every production dependency is pure JavaScript
+  and `tsc` emits identical output on any architecture, so nothing in it needs
+  emulating. Under QEMU, `npm ci` died with
+  `qemu: uncaught target signal 4 (Illegal instruction)` and hung the release.
+  The runtime stage carries no `RUN`, so multi-arch images stay correct.
+- Bumped `docker/build-push-action` to v6, which runs on Node 24 and no longer
+  emits the Node 20 deprecation notice.
 
 ### Known limitations
 

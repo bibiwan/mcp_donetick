@@ -1,5 +1,16 @@
-# Build stage
-FROM node:22-alpine AS builder
+# Build stage.
+#
+# Pinned to the *build* platform, never the target: every production dependency
+# is pure JavaScript and `tsc` emits identical output on any architecture, so
+# there is nothing here worth emulating. Building this stage natively and only
+# varying the runtime stage keeps `linux/arm64` images correct while skipping
+# QEMU entirely -- emulated `npm ci` used to die with
+# `qemu: uncaught target signal 4 (Illegal instruction)`.
+#
+# If a genuinely architecture-dependent step is ever added here (a native
+# module, a compiled binary), this line has to go and the build needs real
+# arm64 -- a native arm64 runner rather than emulation.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 
 WORKDIR /app
 
