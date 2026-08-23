@@ -43,6 +43,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Not needed by the current Dockerfile, whose build stage is pinned to
+      # $BUILDPLATFORM. Kept so that adding an architecture-dependent RUN later
+      # still works instead of failing in a confusing way.
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -67,7 +70,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
