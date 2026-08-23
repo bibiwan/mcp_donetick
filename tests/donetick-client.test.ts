@@ -56,7 +56,7 @@ describe('DoneTickClient - Complete Coverage Suite', () => {
       mockAxiosInstance.get.mockResolvedValueOnce({ data: mockData });
 
       const result = await client.listChores();
-      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/api/v1/chores', { params: {} });
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/api/v1/chores/', { params: {} });
       expect(result).toEqual(mockData);
     });
 
@@ -75,7 +75,7 @@ describe('DoneTickClient - Complete Coverage Suite', () => {
         .mockResolvedValueOnce({ data: [{ id: 10, name: 'Fallback chore' }] });
 
       const result = await client.listChores({ includeSubtasks: true, projectId: 5 });
-      expect(mockAxiosInstance.get).toHaveBeenNthCalledWith(1, '/api/v1/chores', {
+      expect(mockAxiosInstance.get).toHaveBeenNthCalledWith(1, '/api/v1/chores/', {
         params: { includeSubtasks: true, projectId: 5 },
       });
       expect(mockAxiosInstance.get).toHaveBeenNthCalledWith(2, '/eapi/v1/chore', {
@@ -145,11 +145,10 @@ describe('DoneTickClient - Complete Coverage Suite', () => {
         subTasks: [{ name: 'Step 1' }],
       });
 
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/api/v1/chores', {
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/api/v1/chores/', {
         name: 'Full Task',
         description: 'Detailed description',
-        dueDate: '2026-09-01T10:00:00Z',
-        nextDueDate: '2026-09-01T10:00:00Z',
+        nextDueDate: '2026-09-01T10:00:00.000Z',
         frequencyType: 'daily',
         frequency: 2,
         priority: 4,
@@ -162,7 +161,7 @@ describe('DoneTickClient - Complete Coverage Suite', () => {
         isRolling: true,
         isPrivate: true,
         labelsV2: [{ name: 'Urgent' }],
-        subTasks: [{ name: 'Step 1' }],
+        subTasks: [{ name: 'Step 1', orderId: 0 }],
       });
       expect(result).toEqual(created);
     });
@@ -203,6 +202,7 @@ describe('DoneTickClient - Complete Coverage Suite', () => {
         labelsV2: [{ name: 'OldLabel' }],
         subTasks: [{ name: 'OldSubtask' }],
         frequencyMetadata: { unit: 'weeks' },
+        updatedAt: '2026-09-01T08:00:00Z',
       };
 
       mockAxiosInstance.get.mockResolvedValueOnce({ data: { res: existingChore } });
@@ -210,7 +210,7 @@ describe('DoneTickClient - Complete Coverage Suite', () => {
 
       const result = await client.updateChore({ id: 5 });
 
-      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/api/v1/chores', {
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/api/v1/chores/', {
         id: 5,
         name: 'Existing Name',
         frequencyType: 'weekly',
@@ -227,58 +227,47 @@ describe('DoneTickClient - Complete Coverage Suite', () => {
         assignedTo: 2,
         assignees: [{ userId: 2 }],
         labelsV2: [{ name: 'OldLabel' }],
-        subTasks: [{ name: 'OldSubtask' }],
+        subTasks: [{ name: 'OldSubtask', orderId: 0 }],
         frequencyMetadata: { unit: 'weeks' },
+        updatedAt: '2026-09-01T08:00:00Z',
       });
       expect(result).toEqual({ message: 'Updated' });
     });
 
-    it('updateChore should work even if getChore fails', async () => {
-      mockAxiosInstance.get.mockRejectedValueOnce(new Error('Fetch failed'));
+    it('updateChore should refuse to write blind when getChore fails', async () => {
+      // EditChore replaces the whole chore and diffs subtasks/labels by id, so
+      // proceeding without the current state would delete both server-side.
+      mockAxiosInstance.get.mockRejectedValue(new Error('Fetch failed'));
+
+      await expect(
+        client.updateChore({ id: 5, name: 'Updated Name' })
+      ).rejects.toThrow(/would delete its subtasks and labels/);
+
+      expect(mockAxiosInstance.put).not.toHaveBeenCalled();
+    });
+
+    it('updateChore should send a full payload once the read succeeds', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: { res: { id: 5, name: 'Old', updatedAt: '2026-09-01T08:00:00Z' } },
+      });
       mockAxiosInstance.put.mockResolvedValueOnce({ data: { message: 'Updated' } });
 
       const result = await client.updateChore({
         id: 5,
         name: 'Updated Name',
-        description: 'New desc',
         nextDueDate: '2026-10-10T00:00:00Z',
-        frequencyType: 'monthly',
-        frequency: 1,
-        priority: 2,
-        points: 5,
-        projectId: 3,
-        assignedTo: 1,
-        assignStrategy: 'round_robin',
-        isActive: true,
-        isRolling: false,
-        isPrivate: true,
-        labelsV2: [{ name: 'New' }],
         subTasks: [{ name: 'Sub 1' }],
       });
 
-      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/api/v1/chores', {
-        id: 5,
-        name: 'Updated Name',
-        description: 'New desc',
-        nextDueDate: '2026-10-10T00:00:00Z',
-        frequencyType: 'monthly',
-        frequency: 1,
-        priority: 2,
-        points: 5,
-        projectId: 3,
-        assignedTo: 1,
-        assignees: [],
-        assignStrategy: 'round_robin',
-        isActive: true,
-        isRolling: false,
-        isPrivate: true,
-        labelsV2: [{ name: 'New' }],
-        subTasks: [{ name: 'Sub 1' }],
-      });
+      const payload = mockAxiosInstance.put.mock.calls[0][1];
+      expect(payload.name).toBe('Updated Name');
+      expect(payload.nextDueDate).toBe('2026-10-10T00:00:00.000Z');
+      expect(payload.subTasks).toEqual([{ name: 'Sub 1', orderId: 0 }]);
+      expect(payload.updatedAt).toBe('2026-09-01T08:00:00Z');
       expect(result).toEqual({ message: 'Updated' });
     });
 
-    it('completeChore, undoChore, deleteChore, setDueDate, setPriority, setStatus, skipChore, nudgeChore', async () => {
+    it('completeChore, undoChore, deleteChore, setPriority, skipChore, nudgeChore', async () => {
       mockAxiosInstance.post.mockResolvedValue({ data: { res: { success: true } } });
       mockAxiosInstance.put.mockResolvedValue({ data: { res: { success: true } } });
       mockAxiosInstance.delete.mockResolvedValue({ data: { message: 'Deleted' } });
@@ -286,11 +275,41 @@ describe('DoneTickClient - Complete Coverage Suite', () => {
       expect(await client.completeChore({ choreId: 1 })).toEqual({ success: true });
       expect(await client.undoChore(1)).toEqual({ success: true });
       expect(await client.deleteChore(1)).toBe('Deleted');
-      expect(await client.setChoreDueDate(1, '2026-10-10')).toEqual({ success: true });
       expect(await client.setChorePriority(1, 3)).toEqual({ success: true });
-      expect(await client.setChoreStatus(1, 0)).toEqual({ success: true });
       expect(await client.skipChore(1)).toEqual({ success: true });
       expect(await client.nudgeChore(1)).toEqual({ success: true });
+    });
+
+    it('setChoreDueDate echoes back the chore updatedAt, which DoneTick requires', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: { res: { id: 1, name: 'C', updatedAt: '2026-09-01T08:00:00Z' } },
+      });
+      mockAxiosInstance.put.mockResolvedValueOnce({ data: { res: { success: true } } });
+
+      const result = await client.setChoreDueDate(1, '2026-10-10T12:00:00Z');
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/api/v1/chores/1/dueDate', {
+        dueDate: '2026-10-10T12:00:00.000Z',
+        updatedAt: '2026-09-01T08:00:00Z',
+      });
+      expect(result).toEqual({ success: true });
+    });
+
+    it('setChoreDueDate(null) clears the due date', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: { res: { id: 1, name: 'C', updatedAt: '2026-09-01T08:00:00Z' } },
+      });
+      mockAxiosInstance.put.mockResolvedValueOnce({ data: { res: { success: true } } });
+
+      await client.setChoreDueDate(1, null);
+
+      expect(mockAxiosInstance.put.mock.calls[0][1].dueDate).toBeNull();
+    });
+
+    it('setChorePriority refuses values DoneTick rejects, without a round-trip', async () => {
+      await expect(client.setChorePriority(1, 5)).rejects.toThrow(/0-4/);
+      await expect(client.setChorePriority(1, -1)).rejects.toThrow(/0-4/);
+      expect(mockAxiosInstance.put).not.toHaveBeenCalled();
     });
   });
 

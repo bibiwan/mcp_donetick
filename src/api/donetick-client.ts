@@ -16,14 +16,25 @@ import {
   Label,
   CreateLabelInput,
   UpdateLabelInput,
+  SubTask,
+  ChoreDetail,
+  ChoreHistory,
+  ModifyHistoryInput,
+  HistoryQueryOptions,
+  TimeSession,
+  UpdateTimeSessionInput,
+  ThingHistoryEntry,
 } from '../types/donetick.js';
+import { DateOptions, toRfc3339, requireRfc3339 } from '../utils/dates.js';
 
 export class DoneTickClient {
   private http: AxiosInstance;
   private baseUrl: string;
+  private dateOptions: DateOptions;
 
-  constructor(baseUrl: string, token: string) {
+  constructor(baseUrl: string, token: string, dateOptions: DateOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.dateOptions = dateOptions;
     this.http = axios.create({
       baseURL: this.baseUrl,
       headers: {
@@ -46,6 +57,37 @@ export class DoneTickClient {
     throw new Error(`DoneTick API Error during ${action}: ${error instanceof Error ? error.message : String(error)}`);
   }
 
+  /** Normalizes a caller-supplied date to RFC3339; `null` means "clear the field". */
+  private date(value: string | null | undefined): string | null {
+    return toRfc3339(value, this.dateOptions);
+  }
+
+  /** Same, for fields DoneTick cannot accept as null. */
+  private requiredDate(value: string): string {
+    return requireRfc3339(value, this.dateOptions);
+  }
+
+  /**
+   * DoneTick's SubTask model serializes its position as `orderId`, not `order`.
+   * Sending `order` silently leaves every subtask at position 0, so translate
+   * here and keep accepting both spellings from callers.
+   */
+  private normalizeSubTasks(subTasks: SubTask[]): Record<string, any>[] {
+    return subTasks.map((st, idx) => {
+      const raw = st as Record<string, any>;
+      const position = raw.orderId ?? raw.order ?? idx;
+      const normalized: Record<string, any> = {
+        name: st.name,
+        orderId: position,
+      };
+      if (raw.id !== undefined) normalized.id = raw.id;
+      if (raw.completedAt !== undefined) normalized.completedAt = raw.completedAt;
+      if (raw.completedBy !== undefined) normalized.completedBy = raw.completedBy;
+      if (raw.parentId !== undefined) normalized.parentId = raw.parentId;
+      return normalized;
+    });
+  }
+
   // ==================== CHORES ====================
 
   /**
@@ -63,7 +105,7 @@ export class DoneTickClient {
 
       let chores: Chore[] = [];
       try {
-        const resp = await this.http.get<Chore[]>('/api/v1/chores', { params });
+        const resp = await this.http.get<Chore[]>('/api/v1/chores/', { params });
         chores = Array.isArray(resp.data) ? resp.data : (resp.data as any)?.res || [];
       } catch (err: any) {
         if (err.response?.status === 404) {
@@ -124,7 +166,6 @@ export class DoneTickClient {
         points: input.points ?? 0,
         labelsV2: input.labelsV2 ?? [],
         assignees: input.assignees ?? [],
-        subTasks: input.subTasks ?? [],
       };
 
       if (input.frequencyMetadata !== undefined) {
@@ -133,11 +174,19 @@ export class DoneTickClient {
         payload.frequencyMetadata = { unit: 'days' };
       }
 
+      payload.subTasks = this.normalizeSubTasks((input.subTasks ?? []) as SubTask[]);
+
       if (input.description !== undefined) payload.description = input.description;
-      if (input.dueDate !== undefined) {
-        payload.dueDate = input.dueDate;
-        payload.nextDueDate = input.dueDate;
+
+      // `ChoreReq` only declares `nextDueDate`; `dueDate` is accepted here as a
+      // caller-side alias and normalized, since a bare `YYYY-MM-DD` fails Go's
+      // RFC3339 binding with an opaque 400.
+      const rawDue = input.nextDueDate ?? input.dueDate;
+      if (rawDue !== undefined) {
+        payload.nextDueDate = this.date(rawDue);
       }
+      if (input.completionWindow !== undefined) payload.completionWindow = input.completionWindow;
+      if (input.requireApproval !== undefined) payload.requireApproval = input.requireApproval;
       if (input.projectId !== undefined) payload.projectId = input.projectId;
       if (input.assignedTo !== undefined) payload.assignedTo = input.assignedTo;
       if (input.notification !== undefined) payload.notification = input.notification;
@@ -146,7 +195,7 @@ export class DoneTickClient {
 
       let resp;
       try {
-        resp = await this.http.post('/api/v1/chores', payload);
+        resp = await this.http.post('/api/v1/chores/', payload);
       } catch (err: any) {
         if (err.response?.status === 404) {
           resp = await this.http.post('/eapi/v1/chore', payload);
@@ -154,7 +203,19 @@ export class DoneTickClient {
           throw err;
         }
       }
-      return (resp.data as any)?.res || resp.data;
+
+      // `POST /chores/` answers `{"res": 37}` — the new id alone. Returning that
+      // number leaves the caller with nothing to chain on, so resolve it into
+      // the full chore.
+      const created = (resp.data as any)?.res ?? resp.data;
+      if (typeof created === 'number') {
+        try {
+          return await this.getChore(created);
+        } catch {
+          return { id: created } as Chore;
+        }
+      }
+      return created;
     } catch (error) {
       this.handleError(error, 'createChore');
     }
@@ -166,11 +227,17 @@ export class DoneTickClient {
    */
   async updateChore(input: UpdateChoreInput): Promise<Chore> {
     try {
-      let existing: Chore | null = null;
+      // This is a read-modify-write: `EditChore` replaces the whole chore and
+      // diffs subtasks/labels by id, so a failed read must abort. Swallowing it
+      // would send empty `subTasks`/`labelsV2` and wipe both server-side.
+      let existing: Chore;
       try {
         existing = await this.getChore(input.id);
-      } catch {
-        // Continue if getChore fails
+      } catch (err: any) {
+        throw new Error(
+          `Cannot update chore #${input.id}: reading its current state failed, ` +
+            `and updating blind would delete its subtasks and labels. Cause: ${err.message}`
+        );
       }
 
       const payload: Record<string, any> = {
@@ -186,8 +253,24 @@ export class DoneTickClient {
         points: input.points !== undefined ? input.points : (existing?.points ?? 0),
         labelsV2: input.labelsV2 ?? existing?.labelsV2 ?? [],
         assignees: input.assignees ?? existing?.assignees ?? [],
-        subTasks: input.subTasks ?? existing?.subTasks ?? [],
+        subTasks: this.normalizeSubTasks((input.subTasks ?? existing?.subTasks ?? []) as SubTask[]),
       };
+
+      // Preserve the optimistic-concurrency token so a concurrent edit surfaces
+      // as a 403 instead of silently clobbering someone else's change.
+      if (existing?.updatedAt) {
+        payload.updatedAt = existing.updatedAt;
+      }
+      if (input.completionWindow !== undefined) {
+        payload.completionWindow = input.completionWindow;
+      } else if (existing?.completionWindow !== undefined) {
+        payload.completionWindow = existing.completionWindow;
+      }
+      if (input.requireApproval !== undefined) {
+        payload.requireApproval = input.requireApproval;
+      } else if (existing?.requireApproval !== undefined) {
+        payload.requireApproval = existing.requireApproval;
+      }
 
       if (input.frequencyMetadata !== undefined) {
         payload.frequencyMetadata = input.frequencyMetadata;
@@ -204,7 +287,7 @@ export class DoneTickClient {
       }
 
       if (input.nextDueDate !== undefined) {
-        payload.nextDueDate = input.nextDueDate;
+        payload.nextDueDate = this.date(input.nextDueDate);
       } else if (existing?.nextDueDate !== undefined) {
         payload.nextDueDate = existing.nextDueDate;
       }
@@ -237,7 +320,7 @@ export class DoneTickClient {
         payload.thingTrigger = input.thingTrigger;
       }
 
-      const resp = await this.http.put('/api/v1/chores', payload);
+      const resp = await this.http.put('/api/v1/chores/', payload);
       return (resp.data as any)?.res || resp.data;
     } catch (error) {
       this.handleError(error, `updateChore(${input.id})`);
@@ -251,7 +334,7 @@ export class DoneTickClient {
     try {
       const payload: Record<string, any> = {};
       if (input.notes) payload.notes = input.notes;
-      if (input.completedTime) payload.completedTime = input.completedTime;
+      if (input.completedTime) payload.completedTime = this.requiredDate(input.completedTime);
       if (input.completedBy) payload.completedBy = input.completedBy;
 
       const resp = await this.http.post(`/api/v1/chores/${input.choreId}/do`, payload);
@@ -286,38 +369,48 @@ export class DoneTickClient {
   }
 
   /**
-   * Updates the due date of a chore.
+   * Updates the due date of a chore, or clears it when `dueDate` is null.
+   *
+   * `DueDateReq.UpdatedAt` carries `binding:"required"` server-side and doubles
+   * as an optimistic-concurrency token: omitting it is a hard HTTP 400, and a
+   * stale value is a 403. We therefore read the chore first and echo back its
+   * current `updatedAt`.
    */
-  async setChoreDueDate(choreId: number, dueDate: string): Promise<any> {
+  async setChoreDueDate(choreId: number, dueDate: string | null): Promise<Chore> {
     try {
-      const resp = await this.http.put(`/api/v1/chores/${choreId}/dueDate`, { dueDate });
-      return (resp.data as any)?.res || resp.data;
+      const normalized = this.date(dueDate);
+      const current = await this.getChore(choreId);
+      const updatedAt = current.updatedAt ?? new Date().toISOString();
+
+      const resp = await this.http.put(`/api/v1/chores/${choreId}/dueDate`, {
+        dueDate: normalized,
+        updatedAt,
+      });
+      return (resp.data as any)?.res ?? resp.data;
     } catch (error) {
       this.handleError(error, `setChoreDueDate(${choreId})`);
     }
   }
 
   /**
-   * Updates the priority of a chore (0-5).
+   * Updates the priority of a chore.
+   *
+   * The dedicated endpoint validates `gt=-1,lt=5`, so it accepts 0-4 only —
+   * 5 is rejected with HTTP 400 even though DoneTick's own chore payload has
+   * no such ceiling. Verified against a live instance.
    */
   async setChorePriority(choreId: number, priority: number): Promise<any> {
+    if (!Number.isInteger(priority) || priority < 0 || priority > 4) {
+      throw new Error(
+        `Invalid priority ${priority}. DoneTick's priority endpoint accepts integers 0-4 ` +
+          `(0 = none, 1 = highest ... 4 = lowest).`
+      );
+    }
     try {
       const resp = await this.http.put(`/api/v1/chores/${choreId}/priority`, { priority });
       return (resp.data as any)?.res || resp.data;
     } catch (error) {
       this.handleError(error, `setChorePriority(${choreId})`);
-    }
-  }
-
-  /**
-   * Updates status of a chore.
-   */
-  async setChoreStatus(choreId: number, status: number): Promise<any> {
-    try {
-      const resp = await this.http.put(`/api/v1/chores/${choreId}/status`, { status });
-      return (resp.data as any)?.res || resp.data;
-    } catch (error) {
-      this.handleError(error, `setChoreStatus(${choreId})`);
     }
   }
 
@@ -649,4 +742,300 @@ export class DoneTickClient {
       this.handleError(error, `deleteLabel(${id})`);
     }
   }
+
+  // ==================== COMPLETION HISTORY ====================
+
+  /**
+   * Reads the richer `/details` projection of a chore.
+   *
+   * This is the only endpoint exposing `lastCompletedDate`, `lastCompletedBy`
+   * and the accumulated timer `duration`. Note that DoneTick's
+   * `totalCompletedCount` actually counts every history row — reschedules and
+   * skips included — so it is deliberately renamed downstream.
+   */
+  async getChoreDetail(id: number): Promise<ChoreDetail> {
+    try {
+      const resp = await this.http.get(`/api/v1/chores/${id}/details`);
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `getChoreDetail(${id})`);
+    }
+  }
+
+  /**
+   * Full history of one chore: completions, skips, reschedules and misses,
+   * newest first.
+   */
+  async getChoreHistory(id: number): Promise<ChoreHistory[]> {
+    try {
+      const resp = await this.http.get(`/api/v1/chores/${id}/history`);
+      const data = (resp.data as any)?.res ?? resp.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      this.handleError(error, `getChoreHistory(${id})`);
+    }
+  }
+
+  /**
+   * Circle-wide history.
+   *
+   * DoneTick's `limit` query parameter is a number of **days**, not a row
+   * count, and it offers no date-range filter — so `since`/`until`/`statuses`
+   * are applied client-side after the fetch.
+   */
+  async getChoresHistory(options: HistoryQueryOptions = {}): Promise<ChoreHistory[]> {
+    try {
+      const params: Record<string, any> = { limit: options.days ?? 30 };
+      if (options.includeMembers) {
+        params.members = true;
+      }
+
+      const resp = await this.http.get('/api/v1/chores/history', { params });
+      const data = (resp.data as any)?.res ?? resp.data;
+      let entries: ChoreHistory[] = Array.isArray(data) ? data : [];
+
+      const since = options.since ? Date.parse(this.requiredDate(options.since)) : undefined;
+      const until = options.until ? Date.parse(this.requiredDate(options.until)) : undefined;
+
+      if (since !== undefined || until !== undefined) {
+        entries = entries.filter((entry) => {
+          if (!entry.performedAt) return false;
+          const at = Date.parse(entry.performedAt);
+          if (Number.isNaN(at)) return false;
+          if (since !== undefined && at < since) return false;
+          if (until !== undefined && at > until) return false;
+          return true;
+        });
+      }
+
+      if (options.statuses?.length) {
+        const wanted = new Set(options.statuses);
+        entries = entries.filter((entry) => wanted.has(entry.status ?? -1));
+      }
+
+      return entries;
+    } catch (error) {
+      this.handleError(error, 'getChoresHistory');
+    }
+  }
+
+  /** Edits one history entry (when it was performed, its due date, its notes). */
+  async modifyHistoryEntry(input: ModifyHistoryInput): Promise<any> {
+    try {
+      const payload: Record<string, any> = {};
+      if (input.performedAt !== undefined) payload.performedAt = this.requiredDate(input.performedAt);
+      if (input.dueDate !== undefined) payload.dueDate = this.date(input.dueDate);
+      if (input.notes !== undefined) payload.notes = input.notes;
+
+      const resp = await this.http.put(
+        `/api/v1/chores/${input.choreId}/history/${input.historyId}`,
+        payload
+      );
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `modifyHistoryEntry(${input.choreId}/${input.historyId})`);
+    }
+  }
+
+  /** Deletes one history entry. */
+  async deleteHistoryEntry(choreId: number, historyId: number): Promise<any> {
+    try {
+      const resp = await this.http.delete(`/api/v1/chores/${choreId}/history/${historyId}`);
+      return (resp.data as any)?.message ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `deleteHistoryEntry(${choreId}/${historyId})`);
+    }
+  }
+
+  // ==================== TIME TRACKING ====================
+
+  /** Starts (or resumes) the chore's timer. */
+  async startChore(choreId: number): Promise<any> {
+    try {
+      const resp = await this.http.put(`/api/v1/chores/${choreId}/start`, {});
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `startChore(${choreId})`);
+    }
+  }
+
+  /** Pauses the chore's timer, banking the elapsed time. */
+  async pauseChore(choreId: number): Promise<any> {
+    try {
+      const resp = await this.http.put(`/api/v1/chores/${choreId}/pause`, {});
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `pauseChore(${choreId})`);
+    }
+  }
+
+  /**
+   * Reads the chore's time sessions.
+   *
+   * DoneTick answers with a bare object (all-zero when no session exists)
+   * rather than an array, so normalize to a list.
+   */
+  async getChoreTimer(choreId: number): Promise<TimeSession[]> {
+    try {
+      const resp = await this.http.get(`/api/v1/chores/${choreId}/timer`);
+      const data = (resp.data as any)?.res ?? resp.data;
+      if (Array.isArray(data)) {
+        return data;
+      }
+      if (data && typeof data === 'object' && (data.id ?? 0) !== 0) {
+        return [data as TimeSession];
+      }
+      return [];
+    } catch (error) {
+      this.handleError(error, `getChoreTimer(${choreId})`);
+    }
+  }
+
+  /** Clears the chore's accumulated timer. */
+  async resetChoreTimer(choreId: number): Promise<any> {
+    try {
+      const resp = await this.http.put(`/api/v1/chores/${choreId}/timer/reset`, {});
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `resetChoreTimer(${choreId})`);
+    }
+  }
+
+  /**
+   * Rewrites a time session's boundaries.
+   *
+   * This is the only way to record a duration after the fact: DoneTick's
+   * manual-duration handler (`PUT /chores/{id}/timer`) exists in the source but
+   * is not wired into any route, and `POST /{id}/do` has no `timeSpent` field.
+   */
+  async updateTimeSession(input: UpdateTimeSessionInput): Promise<any> {
+    try {
+      const payload: Record<string, any> = {};
+      if (input.startTime !== undefined) payload.startTime = this.requiredDate(input.startTime);
+      if (input.endTime !== undefined) payload.endTime = this.requiredDate(input.endTime);
+
+      const resp = await this.http.put(
+        `/api/v1/chores/${input.choreId}/timer/${input.sessionId}`,
+        payload
+      );
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `updateTimeSession(${input.choreId}/${input.sessionId})`);
+    }
+  }
+
+  /** Deletes one time session. */
+  async deleteTimeSession(choreId: number, sessionId: number): Promise<any> {
+    try {
+      const resp = await this.http.delete(`/api/v1/chores/${choreId}/timer/${sessionId}`);
+      return (resp.data as any)?.message ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `deleteTimeSession(${choreId}/${sessionId})`);
+    }
+  }
+
+  // ==================== SUBTASK COMPLETION ====================
+
+  /**
+   * Ticks or unticks a single subtask without rewriting the chore.
+   *
+   * Pass `completedAt: null` to untick. Note that completing the parent chore
+   * resets every subtask on a recurring chore — DoneTick calls
+   * `ResetSubtasksCompletion` inside its own complete handler.
+   */
+  async setSubtaskCompletion(
+    choreId: number,
+    subtaskId: number,
+    completedAt: string | null
+  ): Promise<any> {
+    try {
+      const resp = await this.http.put(`/api/v1/chores/${choreId}/subtask`, {
+        id: subtaskId,
+        choreId,
+        completedAt: completedAt === null ? null : this.requiredDate(completedAt),
+      });
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `setSubtaskCompletion(${choreId}/${subtaskId})`);
+    }
+  }
+
+  // ==================== ARCHIVE / ASSIGNEE / APPROVAL ====================
+
+  /** Lists archived chores, which `listChores` hides. */
+  async listArchivedChores(): Promise<Chore[]> {
+    try {
+      const resp = await this.http.get('/api/v1/chores/archived');
+      const data = (resp.data as any)?.res ?? resp.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      this.handleError(error, 'listArchivedChores');
+    }
+  }
+
+  async archiveChore(choreId: number): Promise<any> {
+    try {
+      const resp = await this.http.put(`/api/v1/chores/${choreId}/archive`, {});
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `archiveChore(${choreId})`);
+    }
+  }
+
+  async unarchiveChore(choreId: number): Promise<any> {
+    try {
+      const resp = await this.http.put(`/api/v1/chores/${choreId}/unarchive`, {});
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `unarchiveChore(${choreId})`);
+    }
+  }
+
+  /** Reassigns a chore. `AssigneeReq.UpdatedAt` is required server-side. */
+  async setChoreAssignee(choreId: number, userId: number): Promise<any> {
+    try {
+      const current = await this.getChore(choreId);
+      const resp = await this.http.put(`/api/v1/chores/${choreId}/assignee`, {
+        assignee: userId,
+        updatedAt: current.updatedAt ?? new Date().toISOString(),
+      });
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `setChoreAssignee(${choreId})`);
+    }
+  }
+
+  /** Approves a completion that is pending review (`requireApproval` chores). */
+  async approveChore(choreId: number): Promise<any> {
+    try {
+      const resp = await this.http.post(`/api/v1/chores/${choreId}/approve`, {});
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `approveChore(${choreId})`);
+    }
+  }
+
+  /** Rejects a completion that is pending review. */
+  async rejectChore(choreId: number, notes?: string): Promise<any> {
+    try {
+      const payload: Record<string, any> = {};
+      if (notes) payload.notes = notes;
+      const resp = await this.http.post(`/api/v1/chores/${choreId}/reject`, payload);
+      return (resp.data as any)?.res ?? resp.data;
+    } catch (error) {
+      this.handleError(error, `rejectChore(${choreId})`);
+    }
+  }
+
+  /** State-change history of a thing (sensor / counter). */
+  async getThingHistory(thingId: number): Promise<ThingHistoryEntry[]> {
+    try {
+      const resp = await this.http.get(`/api/v1/things/${thingId}/history`);
+      const data = (resp.data as any)?.res ?? resp.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      this.handleError(error, `getThingHistory(${thingId})`);
+    }
+  }
+
 }

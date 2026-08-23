@@ -213,12 +213,12 @@ describe('Chore Tools', () => {
     const handler = registeredTools.get('donetick_set_subtasks')!;
     mockClient.updateChore.mockResolvedValueOnce({ id: 10, subTasks: [{ name: 'Step 1' }] });
 
-    const res = await handler({ choreId: 10, subtasks: ['Step 1', { name: 'Step 2', order: 1 }] });
+    const res = await handler({ choreId: 10, subtasks: ['Step 1', { name: 'Step 2', orderId: 1 }] });
     expect(mockClient.updateChore).toHaveBeenCalledWith({
       id: 10,
       subTasks: [
-        { name: 'Step 1', order: 0 },
-        { name: 'Step 2', order: 1 },
+        { name: 'Step 1', orderId: 0 },
+        { name: 'Step 2', orderId: 1 },
       ],
     });
     expect(res.content[0].text).toContain('Subtasks updated for Chore #10');
@@ -239,8 +239,8 @@ describe('Chore Tools', () => {
     expect(mockClient.updateChore).toHaveBeenCalledWith({
       id: 10,
       subTasks: [
-        { id: 1, name: 'Existing 1', order: 0 },
-        { name: 'New Subtask', order: 1 },
+        { id: 1, name: 'Existing 1', orderId: 0 },
+        { name: 'New Subtask', orderId: 1 },
       ],
     });
     expect(res.content[0].text).toContain("Subtask 'New Subtask' added to Chore #10");
