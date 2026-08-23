@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-08-24
+
+### Fixed
+
+- **Chore descriptions are no longer a mix of HTML and plain text.** DoneTick
+  stores this field as HTML — its web editor is a rich-text field, and the
+  server rewrites `<img>` tags on read to re-sign attachments — but the
+  connector wrote plain text, so an instance accumulated both
+  `<p>Wipe the shelves</p>` and `Wipe the shelves` depending on where the chore
+  was created. Now:
+  - **On read**, `description` is always plain text. Paragraphs and `<br>`
+    become newlines, list items gain a leading dash, entities are decoded, and
+    images are named `[image: alt]` rather than vanishing. When the stored value
+    actually contained markup, it is preserved alongside as `descriptionHtml`.
+  - **On write**, plain text is wrapped into the minimal HTML the editor
+    expects, so a multi-line description renders as written instead of
+    collapsing into one run-on line. Input that is already HTML passes through
+    untouched, so echoing back a value that was just read is safe.
+  - An update that does not touch the description re-sends the stored markup
+    rather than the normalized text, so unrelated edits cannot flatten it.
+
+  Existing plain-text descriptions are left as they are: they read back
+  identically, and every one of them is a single line, so nothing renders
+  differently.
+
 ## [2.0.0] - 2026-08-23
 
 Completion history, time tracking and per-subtask control, plus fixes for
@@ -136,5 +161,6 @@ endpoint was verified against a live DoneTick instance.
 - OWASP hardening: timing-safe token comparison, SSRF protocol checks, security
   headers, payload caps, non-root container.
 
+[2.0.1]: https://github.com/bibiwan/mcp_donetick/releases/tag/v2.0.1
 [2.0.0]: https://github.com/bibiwan/mcp_donetick/releases/tag/v2.0.0
 [1.0.0]: https://github.com/bibiwan/mcp_donetick/releases/tag/v1.0.0

@@ -1,6 +1,6 @@
 {
   "name": "mcp-donetick",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Model Context Protocol (MCP) HTTP SSE server for DoneTick: chores, completion history, time tracking and subtasks",
   "main": "dist/index.js",
   "type": "module",

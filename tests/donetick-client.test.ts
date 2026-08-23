@@ -147,7 +147,7 @@ describe('DoneTickClient - Complete Coverage Suite', () => {
 
       expect(mockAxiosInstance.post).toHaveBeenCalledWith('/api/v1/chores/', {
         name: 'Full Task',
-        description: 'Detailed description',
+        description: '<p>Detailed description</p>',
         nextDueDate: '2026-09-01T10:00:00.000Z',
         frequencyType: 'daily',
         frequency: 2,
