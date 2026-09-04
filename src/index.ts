@@ -3,6 +3,8 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { config } from './config.js';
 import { DoneTickClient } from './api/donetick-client.js';
 import { createDoneTickMcpServer } from './server.js';
@@ -12,6 +14,12 @@ interface SessionData {
   client: DoneTickClient;
   createdAt: Date;
   keepAliveInterval?: NodeJS.Timeout;
+}
+
+interface StreamableSessionData {
+  transport: StreamableHTTPServerTransport;
+  client: DoneTickClient;
+  createdAt: Date;
 }
 
 const MAX_SESSIONS = 100;
@@ -37,6 +45,9 @@ app.use(express.json({ limit: '1mb' }));
 
 // Active MCP SSE sessions: sessionId -> SessionData
 const sessions = new Map<string, SessionData>();
+
+// Active MCP Streamable HTTP sessions: sessionId -> StreamableSessionData
+const streamableSessions = new Map<string, StreamableSessionData>();
 
 /**
  * Constant-time string comparison to prevent timing attacks (OWASP A07).
@@ -107,7 +118,9 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    activeSessions: sessions.size,
+    activeSessions: sessions.size + streamableSessions.size,
+    activeSseSessions: sessions.size,
+    activeStreamableSessions: streamableSessions.size,
     donetickUrl: config.donetickUrl,
     hasDefaultToken: !!config.defaultDonetickToken,
     hasMcpAuth: !!config.mcpAuthToken,
@@ -143,8 +156,9 @@ app.get('/', (_req: Request, res: Response) => {
         <h2>🚀 Quick Setup</h2>
         <ol>
           <li>Open your MCP Client (e.g. <strong>Mistral Le Chat</strong>, <strong>Claude Desktop</strong>, or <strong>LibreChat</strong>).</li>
-          <li>Add a new MCP server with the SSE URL:
-            <pre><code>http://&lt;your-server-host&gt;:${config.port}/sse</code></pre>
+          <li>Add a new MCP server. Prefer the <strong>Streamable HTTP</strong> URL (SSE is kept for backwards compatibility):
+            <pre><code>http://&lt;your-server-host&gt;:${config.port}/mcp</code></pre>
+            Legacy SSE URL: <pre><code>http://&lt;your-server-host&gt;:${config.port}/sse</code></pre>
           </li>
           <li>Authentication type: <strong>Bearer Token</strong></li>
           <li>Enter your <strong>DoneTick API Key / Access Token</strong>.</li>
@@ -262,6 +276,92 @@ const handlePostMessage = async (req: Request, res: Response) => {
 app.post('/messages', handlePostMessage);
 app.post('/mcp/messages', handlePostMessage);
 
+// ==================== STREAMABLE HTTP TRANSPORT ====================
+//
+// Implements the current MCP "Streamable HTTP" transport (spec 2025-03-26+),
+// which replaces the deprecated standalone SSE transport kept above for
+// backwards compatibility with older clients.
+
+const handleStreamableRequest = async (req: Request, res: Response) => {
+  const auth = authenticateRequest(req);
+  if (!auth.success || !auth.doneTickToken) {
+    res.status(401).json({ error: auth.error });
+    return;
+  }
+
+  const sessionIdHeader = req.headers['mcp-session-id'] as string | undefined;
+  let session = sessionIdHeader ? streamableSessions.get(sessionIdHeader) : undefined;
+
+  if (session) {
+    try {
+      await session.transport.handleRequest(req, res, req.body);
+    } catch (err: any) {
+      console.error(`[Streamable HTTP] Error handling request for session ${sessionIdHeader}:`, err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: err.message || 'Internal error handling message' });
+      }
+    }
+    return;
+  }
+
+  if (sessionIdHeader) {
+    res.status(404).json({ error: `Session ${sessionIdHeader} not found or expired` });
+    return;
+  }
+
+  if (req.method !== 'POST' || !isInitializeRequest(req.body)) {
+    res.status(400).json({ error: 'Bad Request: No valid session ID provided' });
+    return;
+  }
+
+  // OWASP A04: Session cap check
+  if (streamableSessions.size >= MAX_SESSIONS) {
+    res.status(503).json({ error: 'Server busy: Maximum active MCP sessions reached' });
+    return;
+  }
+
+  console.log(`[Streamable HTTP] New client connection from ${req.ip}`);
+
+  const doneTickClient = new DoneTickClient(config.donetickUrl, auth.doneTickToken, {
+    timeZone: config.timeZone,
+    defaultTime: config.defaultDueTime,
+  });
+  const mcpServer = createDoneTickMcpServer(doneTickClient);
+
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+    onsessioninitialized: (sessionId) => {
+      streamableSessions.set(sessionId, {
+        transport,
+        client: doneTickClient,
+        createdAt: new Date(),
+      });
+      console.log(`[Streamable HTTP] Session initialized: ${sessionId} (Active sessions: ${streamableSessions.size})`);
+    },
+  });
+
+  transport.onclose = () => {
+    if (transport.sessionId) {
+      console.log(`[Streamable HTTP] Session closed: ${transport.sessionId}`);
+      streamableSessions.delete(transport.sessionId);
+    }
+  };
+
+  try {
+    await mcpServer.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (err) {
+    console.error('[Streamable HTTP] Failed to initialize session:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to initialize MCP session' });
+    }
+  }
+};
+
+app.post('/mcp', handleStreamableRequest);
+app.get('/mcp', handleStreamableRequest);
+app.delete('/mcp', handleStreamableRequest);
+
 // ==================== START SERVER ====================
 
 let serverInstance: any = null;
@@ -270,10 +370,11 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`====================================================`);
     console.log(` DoneTick MCP HTTP Stream Server`);
     console.log(` Listening on http://${config.host}:${config.port}`);
-    console.log(` SSE Endpoint: http://${config.host}:${config.port}/sse`);
+    console.log(` Streamable HTTP Endpoint: http://${config.host}:${config.port}/mcp`);
+    console.log(` SSE Endpoint (legacy): http://${config.host}:${config.port}/sse`);
     console.log(` Target DoneTick: ${config.donetickUrl}`);
     console.log(`====================================================`);
   });
 }
 
-export { app, extractToken, authenticateRequest, safeCompare, sessions, serverInstance };
+export { app, extractToken, authenticateRequest, safeCompare, sessions, streamableSessions, serverInstance };

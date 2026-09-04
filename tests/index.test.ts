@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
-import { app, extractToken, authenticateRequest, sessions } from '../src/index.js';
+import { app, extractToken, authenticateRequest, sessions, streamableSessions } from '../src/index.js';
 import { config } from '../src/config.js';
 
 describe('HTTP / SSE Server Endpoints', () => {
   beforeEach(() => {
     sessions.clear();
+    streamableSessions.clear();
   });
 
   describe('extractToken()', () => {
@@ -181,6 +182,128 @@ describe('HTTP / SSE Server Endpoints', () => {
       const res = await request(app)
         .post('/messages?sessionId=test-session-err')
         .send({ jsonrpc: '2.0' });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Transport broken');
+    });
+  });
+
+  describe('Streamable HTTP transport (/mcp)', () => {
+    it('POST /mcp without token should return 401 Unauthorized', async () => {
+      const savedToken = config.defaultDonetickToken;
+      config.defaultDonetickToken = undefined;
+
+      const res = await request(app)
+        .post('/mcp')
+        .send({ jsonrpc: '2.0', method: 'initialize', id: 1, params: {} });
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBeDefined();
+
+      config.defaultDonetickToken = savedToken;
+    });
+
+    it('POST /mcp without a session ID and a non-initialize request should return 400', async () => {
+      const res = await request(app)
+        .post('/mcp')
+        .set('Authorization', 'Bearer valid-test-token')
+        .send({ jsonrpc: '2.0', method: 'ping', id: 1 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('No valid session ID');
+    });
+
+    it('POST /mcp with an unknown session ID should return 404', async () => {
+      const res = await request(app)
+        .post('/mcp')
+        .set('Authorization', 'Bearer valid-test-token')
+        .set('mcp-session-id', 'non-existent-session')
+        .send({ jsonrpc: '2.0', method: 'ping', id: 1 });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain('not found or expired');
+    });
+
+    it('POST /mcp with a valid initialize request should create a session', async () => {
+      const res = await request(app)
+        .post('/mcp')
+        .set('Authorization', 'Bearer valid-test-token')
+        .set('Accept', 'application/json, text/event-stream')
+        .send({
+          jsonrpc: '2.0',
+          method: 'initialize',
+          id: 1,
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'test-client', version: '1.0.0' },
+          },
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers['mcp-session-id']).toBeDefined();
+      expect(streamableSessions.size).toBe(1);
+    });
+
+    it('GET /mcp with an existing session ID should call transport.handleRequest', async () => {
+      const mockTransport = {
+        handleRequest: vi.fn().mockImplementation((_req, res) => {
+          res.status(200).end();
+        }),
+      };
+
+      streamableSessions.set('test-streamable-session', {
+        transport: mockTransport as any,
+        client: {} as any,
+        createdAt: new Date(),
+      });
+
+      const res = await request(app)
+        .get('/mcp')
+        .set('Authorization', 'Bearer valid-test-token')
+        .set('mcp-session-id', 'test-streamable-session');
+
+      expect(mockTransport.handleRequest).toHaveBeenCalled();
+      expect(res.status).toBe(200);
+    });
+
+    it('DELETE /mcp with an existing session ID should call transport.handleRequest', async () => {
+      const mockTransport = {
+        handleRequest: vi.fn().mockImplementation((_req, res) => {
+          res.status(200).end();
+        }),
+      };
+
+      streamableSessions.set('test-streamable-session-del', {
+        transport: mockTransport as any,
+        client: {} as any,
+        createdAt: new Date(),
+      });
+
+      const res = await request(app)
+        .delete('/mcp')
+        .set('Authorization', 'Bearer valid-test-token')
+        .set('mcp-session-id', 'test-streamable-session-del');
+
+      expect(mockTransport.handleRequest).toHaveBeenCalled();
+      expect(res.status).toBe(200);
+    });
+
+    it('POST /mcp should handle transport errors gracefully', async () => {
+      const mockTransport = {
+        handleRequest: vi.fn().mockRejectedValue(new Error('Transport broken')),
+      };
+
+      streamableSessions.set('test-streamable-session-err', {
+        transport: mockTransport as any,
+        client: {} as any,
+        createdAt: new Date(),
+      });
+
+      const res = await request(app)
+        .post('/mcp')
+        .set('Authorization', 'Bearer valid-test-token')
+        .set('mcp-session-id', 'test-streamable-session-err')
+        .send({ jsonrpc: '2.0', method: 'ping', id: 1 });
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Transport broken');

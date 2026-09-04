@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-04
+
+### Added
+
+- **Streamable HTTP transport (`/mcp`).** The server now implements the
+  current MCP Streamable HTTP transport in addition to the legacy SSE
+  transport, using the same authentication, session cap and per-session
+  DoneTick client as `/sse`. Existing SSE clients keep working unchanged
+  against `/sse` and `/mcp/sse`; new clients should prefer `/mcp`.
+
 ## [2.0.1] - 2026-08-24
 
 ### Fixed
@@ -161,6 +171,7 @@ endpoint was verified against a live DoneTick instance.
 - OWASP hardening: timing-safe token comparison, SSRF protocol checks, security
   headers, payload caps, non-root container.
 
+[2.1.0]: https://github.com/bibiwan/mcp_donetick/releases/tag/v2.1.0
 [2.0.1]: https://github.com/bibiwan/mcp_donetick/releases/tag/v2.0.1
 [2.0.0]: https://github.com/bibiwan/mcp_donetick/releases/tag/v2.0.0
 [1.0.0]: https://github.com/bibiwan/mcp_donetick/releases/tag/v1.0.0

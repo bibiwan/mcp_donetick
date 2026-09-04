@@ -1,11 +1,11 @@
-# 🚀 DoneTick MCP Server (Model Context Protocol SSE)
+# 🚀 DoneTick MCP Server (Model Context Protocol)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://img.shields.io/badge/Tests-88%20Passed%20(100%25)-brightgreen.svg)]()
 [![OWASP Hardened](https://img.shields.io/badge/Security-OWASP%20Hardened-green.svg)]()
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)]()
 
-A complete, production-ready **Model Context Protocol (MCP)** server implementing **HTTP Server-Sent Events (SSE)** for **[DoneTick](https://donetick.com)** (self-hosted chores and task management).
+A complete, production-ready **Model Context Protocol (MCP)** server for **[DoneTick](https://donetick.com)** (self-hosted chores and task management). Supports the current **Streamable HTTP** transport (`/mcp`) as well as the legacy **HTTP Server-Sent Events (SSE)** transport (`/sse`) for older clients.
 
 Compatible with **Mistral Le Chat**, **Claude Desktop**, **LibreChat**, **n8n**, **Open WebUI**, and any MCP client.
 
@@ -156,7 +156,7 @@ docker compose up -d
 2. Click **"Add MCP Server"**.
 3. Fill in the connection settings:
    - **Name**: `DoneTick`
-   - **URL**: `https://<your-server-host>:3000/sse`
+   - **URL**: `https://<your-server-host>:3000/mcp` (Streamable HTTP, recommended). Use `/sse` instead if your client only supports the legacy SSE transport.
    - **Authentication**: `Bearer Token`
    - **Token**: `<Your DoneTick API Token>` (generated in DoneTick ➔ Settings ➔ API Token)
 4. Save and start chatting!
