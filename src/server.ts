@@ -13,7 +13,7 @@ import { registerChoreAdminTools } from './tools/chore-admin.js';
 export function createDoneTickMcpServer(client: DoneTickClient): McpServer {
   const server = new McpServer({
     name: 'donetick',
-    version: '2.0.1',
+    version: '2.1.0',
   });
 
   registerChoreTools(server, client);
