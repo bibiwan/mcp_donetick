@@ -92,6 +92,25 @@ describe('Chore Tools', () => {
     expect(errRes.content[0].text).toContain('Failed to create chore: Invalid name');
   });
 
+  it('donetick_create_chore forwards frequencyMetadata for a custom interval duration', async () => {
+    const handler = registeredTools.get('donetick_create_chore')!;
+    mockClient.createChore.mockResolvedValueOnce({ id: 11, name: 'Water the plants' });
+
+    await handler({
+      name: 'Water the plants',
+      frequencyType: 'interval',
+      frequency: 2,
+      frequencyMetadata: { unit: 'weeks' },
+    });
+
+    expect(mockClient.createChore).toHaveBeenCalledWith({
+      name: 'Water the plants',
+      frequencyType: 'interval',
+      frequency: 2,
+      frequencyMetadata: { unit: 'weeks' },
+    });
+  });
+
   it('donetick_update_chore tool handler should update chore and handle error', async () => {
     const handler = registeredTools.get('donetick_update_chore')!;
     mockClient.updateChore.mockResolvedValueOnce({ id: 10, name: 'Updated Task' });
@@ -104,6 +123,25 @@ describe('Chore Tools', () => {
     const errRes = await handler({ id: 10 });
     expect(errRes.isError).toBe(true);
     expect(errRes.content[0].text).toContain('Failed to update chore #10: Update failed');
+  });
+
+  it('donetick_update_chore forwards frequencyMetadata for a custom interval duration', async () => {
+    const handler = registeredTools.get('donetick_update_chore')!;
+    mockClient.updateChore.mockResolvedValueOnce({ id: 10, name: 'Pay rent' });
+
+    await handler({
+      id: 10,
+      frequencyType: 'interval',
+      frequency: 2,
+      frequencyMetadata: { unit: 'months' },
+    });
+
+    expect(mockClient.updateChore).toHaveBeenCalledWith({
+      id: 10,
+      frequencyType: 'interval',
+      frequency: 2,
+      frequencyMetadata: { unit: 'months' },
+    });
   });
 
   it('donetick_set_chore_project tool handler should attach chore to project and handle error', async () => {

@@ -113,8 +113,32 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
           'no_repeat',
         ])
         .optional()
-        .describe('Recurrence type (default: once)'),
-      frequency: z.number().optional().describe('Frequency interval (e.g. every 1 day/week/month)'),
+        .describe(
+          'Recurrence type (default: once). For a custom duration (e.g. "every 2 weeks", ' +
+            '"every 2 months"), use "interval" together with frequency and frequencyMetadata.unit ' +
+            '-- "weekly"/"monthly"/"yearly" always mean every 1 week/month/year and cannot take a ' +
+            'custom multiplier on their own.'
+        ),
+      frequency: z
+        .number()
+        .optional()
+        .describe(
+          'How many units between occurrences (default: 1). E.g. with frequencyType "interval" and ' +
+            'frequencyMetadata.unit "weeks", a frequency of 2 means every 2 weeks.'
+        ),
+      frequencyMetadata: z
+        .object({
+          unit: z
+            .enum(['days', 'weeks', 'months', 'years'])
+            .optional()
+            .describe('Unit for frequencyType "interval" (default: "days" if omitted)'),
+        })
+        .optional()
+        .describe(
+          'Extra recurrence settings. Required to get custom durations out of frequencyType ' +
+            '"interval": e.g. { unit: "weeks" } with frequency 2 for "every 2 weeks", or ' +
+            '{ unit: "months" } with frequency 2 for "every 2 months".'
+        ),
       priority: z
         .number()
         .min(0)
@@ -257,8 +281,31 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
           'no_repeat',
         ])
         .optional()
-        .describe('Recurrence type'),
-      frequency: z.number().optional().describe('Frequency interval number'),
+        .describe(
+          'Recurrence type. For a custom duration (e.g. "every 2 weeks", "every 2 months"), use ' +
+            '"interval" together with frequency and frequencyMetadata.unit -- "weekly"/"monthly"/' +
+            '"yearly" always mean every 1 week/month/year and cannot take a custom multiplier on their own.'
+        ),
+      frequency: z
+        .number()
+        .optional()
+        .describe(
+          'How many units between occurrences. E.g. with frequencyType "interval" and ' +
+            'frequencyMetadata.unit "weeks", a frequency of 2 means every 2 weeks.'
+        ),
+      frequencyMetadata: z
+        .object({
+          unit: z
+            .enum(['days', 'weeks', 'months', 'years'])
+            .optional()
+            .describe('Unit for frequencyType "interval" (default: "days" if omitted, or the chore\'s existing unit)'),
+        })
+        .optional()
+        .describe(
+          'Extra recurrence settings. Required to get custom durations out of frequencyType ' +
+            '"interval": e.g. { unit: "weeks" } with frequency 2 for "every 2 weeks", or ' +
+            '{ unit: "months" } with frequency 2 for "every 2 months".'
+        ),
       priority: z
         .number()
         .min(0)
