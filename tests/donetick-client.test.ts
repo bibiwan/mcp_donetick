@@ -280,6 +280,14 @@ describe('DoneTickClient - Complete Coverage Suite', () => {
       expect(await client.nudgeChore(1)).toEqual({ success: true });
     });
 
+    it('completeChore sends completedBy so an admin can credit another member', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: { res: { success: true } } });
+
+      await client.completeChore({ choreId: 1, completedBy: 2 });
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/api/v1/chores/1/do', { completedBy: 2 });
+    });
+
     it('setChoreDueDate echoes back the chore updatedAt, which DoneTick requires', async () => {
       mockAxiosInstance.get.mockResolvedValueOnce({
         data: { res: { id: 1, name: 'C', updatedAt: '2026-09-01T08:00:00Z' } },

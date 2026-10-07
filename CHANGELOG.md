@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`completedBy` on `donetick_complete_chore`.** The client already sent
+  `completedBy` to DoneTick's `/chores/{id}/do`, but the tool's input schema
+  did not expose it, so a completion was always credited to the caller. A
+  circle admin can now record a chore as done by another member, which keeps
+  points and least-completed rotation accurate when one person reports what
+  another did. DoneTick rejects the field from non-admins.
+
 ## [2.1.0] - 2026-09-04
 
 ### Added

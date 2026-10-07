@@ -176,6 +176,26 @@ describe('Chore Tools', () => {
     expect(errRes.content[0].text).toContain('Failed to complete chore #10');
   });
 
+  it('donetick_complete_chore accepts completedBy and passes it to the client', async () => {
+    const schemas: Map<string, Record<string, unknown>> = new Map();
+    vi.spyOn(server, 'tool').mockImplementation(((name: string, ...rest: any[]) => {
+      schemas.set(name, rest[rest.length - 2]);
+      registeredTools.set(name, rest[rest.length - 1]);
+      return server;
+    }) as any);
+    registerChoreTools(server, mockClient as unknown as DoneTickClient);
+    expect(schemas.get('donetick_complete_chore')).toHaveProperty('completedBy');
+
+    const handler = registeredTools.get('donetick_complete_chore')!;
+    mockClient.completeChore.mockResolvedValueOnce({ status: 'done' });
+    await handler({ choreId: 10, completedBy: 2, completedTime: '2026-10-07T07:00:00-04:00' });
+    expect(mockClient.completeChore).toHaveBeenCalledWith({
+      choreId: 10,
+      completedBy: 2,
+      completedTime: '2026-10-07T07:00:00-04:00',
+    });
+  });
+
   it('donetick_set_chore_notifications tool handler should configure notifications and handle error', async () => {
     const handler = registeredTools.get('donetick_set_chore_notifications')!;
     mockClient.updateChore.mockResolvedValueOnce({ id: 10, notification: true });

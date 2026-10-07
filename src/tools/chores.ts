@@ -742,6 +742,13 @@ export function registerChoreTools(server: McpServer, client: DoneTickClient) {
         .string()
         .optional()
         .describe('Completion timestamp in RFC3339 format (defaults to current time)'),
+      completedBy: z
+        .number()
+        .optional()
+        .describe(
+          'User ID of the circle member who did the chore, when it was not the caller (see ' +
+            'donetick_list_members). DoneTick accepts this only from a circle admin. Defaults to the caller.'
+        ),
     },
     async (args) => {
       try {
