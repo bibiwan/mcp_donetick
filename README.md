@@ -22,7 +22,7 @@ against a live instance by `npm run smoke`.
 - `donetick_get_chore`: Full task details — recurrence, assignees, subtasks, labels, triggers — plus `lastCompletedDate`, `lastCompletedBy` and `timeSpentSeconds`.
 - `donetick_create_chore`: Create a chore with due date, recurrence, priority, points, project, subtasks, labels, notifications, approval and sensor triggers.
 - `donetick_update_chore`: Partial or full updates. Aborts rather than writing blind if the chore cannot be read first.
-- `donetick_complete_chore`: Complete a chore and schedule its next recurrence.
+- `donetick_complete_chore`: Complete a chore and schedule its next recurrence. A circle admin can pass `completedBy` to credit the member who did it.
 - `donetick_undo_chore`: Undo the last completion.
 - `donetick_delete_chore`: Permanently delete a chore (prefer archiving).
 - `donetick_set_due_date`: Set, change, or **clear** a due date.
